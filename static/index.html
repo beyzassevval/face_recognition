@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yüz Tanıma</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: rgba(255,255,255,0.04); --border: rgba(255,255,255,0.08);
+    --text: #e8eaf0; --muted: #8a90a2; --accent: #6c8cff; --ok: #3ddc97; --warn: #ff6b6b;
+    --c0: #509bff; --c1: #3cc878; --c2: #ffaa50; --c3: #e66edc; --c4: #d2d23c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, #1b2340 0%, transparent 60%),
+                radial-gradient(900px 500px at 110% 110%, #22163a 0%, transparent 60%), var(--bg);
+    color: var(--text); min-height: 100vh; padding: 24px;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+          background: linear-gradient(135deg, var(--accent), #a06cff); box-shadow: 0 6px 24px rgba(108,140,255,.4); }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .pills { display: flex; gap: 8px; }
+  .pill { padding: 6px 12px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border);
+          font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px;
+          backdrop-filter: blur(14px); padding: 18px; }
+  .video { padding: 10px; position: relative; }
+  .video img { width: 100%; display: block; border-radius: 14px; background: #000; aspect-ratio: 16/9; object-fit: cover; }
+  .banner { position: absolute; left: 26px; bottom: 26px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .tag { padding: 8px 14px; border-radius: 12px; background: rgba(10,12,18,.72); backdrop-filter: blur(10px);
+         border: 1px solid var(--border); font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+
+  aside { display: flex; flex-direction: column; gap: 20px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin-bottom: 14px; }
+  .person { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 14px;
+            border: 1px solid transparent; transition: all .25s; }
+  .person + .person { margin-top: 8px; }
+  .person.active { background: rgba(255,255,255,.05); border-color: var(--pc); box-shadow: 0 0 0 1px var(--pc), 0 8px 30px -10px var(--pc); }
+  .avatar { width: 52px; height: 52px; border-radius: 14px; object-fit: cover; border: 2px solid var(--pc); }
+  .pinfo { flex: 1; min-width: 0; }
+  .pname { font-weight: 600; text-transform: capitalize; display: flex; justify-content: space-between; }
+  .pmeta { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
+  .bar { height: 6px; border-radius: 6px; background: rgba(255,255,255,.07); overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--pc); border-radius: 6px; transition: width .25s; }
+  .state { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,.06); color: var(--muted); }
+  .person.active .state { background: var(--pc); color: #0b0d12; }
+
+  label { font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 8px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  input[type=text], select { flex: 1; background: rgba(255,255,255,.05); border: 1px solid var(--border); color: var(--text);
+          border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 14px; outline: none; }
+  input[type=text]:focus { border-color: var(--accent); }
+  button { background: var(--accent); color: white; border: 0; border-radius: 10px; padding: 9px 14px;
+           font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .1s, filter .2s; }
+  button:hover { filter: brightness(1.12); } button:active { transform: scale(.97); }
+  button.ghost { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); width: 100%; }
+  button:disabled { opacity: .5; cursor: wait; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); opacity: 0;
+           background: #1a1f2e; border: 1px solid var(--border); padding: 12px 18px; border-radius: 12px; font-size: 14px;
+           transition: all .3s; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+  #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round">
+        <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
+        <circle cx="12" cy="10" r="3"/><path d="M7 18c1-2.5 3-3.5 5-3.5s4 1 5 3.5"/>
+      </svg>
+    </div>
+    <div><h1>Yüz Tanıma</h1><div class="sub">YOLOv8-face · SFace gömme · zamansal oylama</div></div>
+  </div>
+  <div class="pills">
+    <div class="pill"><span class="dot"></span><span id="status">canlı</span></div>
+    <div class="pill"><span id="fps">0</span>&nbsp;FPS</div>
+    <div class="pill"><span id="nfaces">0</span>&nbsp;yüz</div>
+    <div class="pill">çıkış: <b style="color:var(--text)">&nbsp;Q</b></div>
+  </div>
+</header>
+
+<main>
+  <section class="card video">
+    <img src="/stream" alt="Canlı kamera">
+    <div class="banner" id="banner"></div>
+  </section>
+
+  <aside>
+    <div class="card">
+      <h2>Kayıtlı kişiler</h2>
+      <div id="people"></div>
+    </div>
+
+    <div class="card">
+      <h2>Hassasiyet</h2>
+      <label><span>Tanıma eşiği</span><span id="thVal">0.42</span></label>
+      <input type="range" id="th" min="0.25" max="0.75" step="0.01">
+      <div class="hint">Yüksek eşik = daha az yanlış eşleşme, ama zor açılarda daha sık "Bilinmeyen".</div>
+    </div>
+
+    <div class="card">
+      <h2>Kameradan örnek ekle</h2>
+      <div class="hint">Kadrajda tek yüz varken farklı açı ve ışıkta birkaç kare ekle, sonra galeriyi yenile.</div>
+      <div class="row">
+        <input type="text" id="enrollName" placeholder="isim (ör. beyza)" list="names">
+        <datalist id="names"></datalist>
+        <button id="enrollBtn">Ekle</button>
+      </div>
+      <div class="row"><button class="ghost" id="rebuildBtn">Galeriyi yenile</button></div>
+    </div>
+  </aside>
+</main>
+<div id="toast"></div>
+
+<script>
+const COLORS = ["--c0","--c1","--c2","--c3","--c4"].map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+let people = [], thTouched = false;
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+function renderPeople(list) {
+  const key = list.join(",");
+  if (key === people.join(",")) return;
+  people = list;
+  document.getElementById("names").innerHTML = list.map(n => `<option value="${n}">`).join("");
+  document.getElementById("people").innerHTML = list.map((n, i) => `
+    <div class="person" id="p-${n}" style="--pc:${COLORS[i % COLORS.length]}">
+      <img class="avatar" src="/api/thumb/${n}?t=${Date.now()}">
+      <div class="pinfo">
+        <div class="pname"><span>${n}</span><span class="state">yok</span></div>
+        <div class="pmeta"></div>
+        <div class="bar"><div></div></div>
+      </div>
+    </div>`).join("");
+}
+
+async function poll() {
+  try {
+    const s = await (await fetch("/api/state")).json();
+    document.getElementById("fps").textContent = s.fps.toFixed(0);
+    document.getElementById("nfaces").textContent = s.faces.length;
+    document.getElementById("status").textContent = s.status;
+    if (!thTouched) { th.value = s.threshold; thVal.textContent = (+s.threshold).toFixed(2); }
+
+    const names = Object.keys(s.people).sort();
+    renderPeople(names);
+
+    names.forEach((n, i) => {
+      const el = document.getElementById("p-" + n);
+      const seen = s.faces.find(f => f.name === n);
+      const best = Math.max(0, ...s.faces.map(f => f.scores[n] ?? 0));
+      el.classList.toggle("active", !!seen);
+      el.querySelector(".state").textContent = seen ? "tanındı" : "yok";
+      el.querySelector(".pmeta").textContent = `${s.people[n]} örnek · benzerlik ${(best * 100).toFixed(0)}%`;
+      el.querySelector(".bar > div").style.width = (Math.min(1, best) * 100) + "%";
+    });
+
+    document.getElementById("banner").innerHTML = s.faces.map(f => {
+      const i = names.indexOf(f.name), c = i >= 0 ? COLORS[i % COLORS.length] : "#eb5a5a";
+      const label = f.name === "Bilinmeyen" ? "Bilinmeyen" : f.name[0].toUpperCase() + f.name.slice(1);
+      return `<div class="tag"><span class="dot" style="background:${c};box-shadow:0 0 8px ${c}"></span>${label}
+              <span style="color:var(--muted);font-weight:500">${(f.score * 100).toFixed(0)}%</span></div>`;
+    }).join("");
+  } catch (e) { document.getElementById("status").textContent = "bağlantı yok"; }
+  setTimeout(poll, 200);
+}
+
+const th = document.getElementById("th"), thVal = document.getElementById("thVal");
+th.oninput = () => { thTouched = true; thVal.textContent = (+th.value).toFixed(2); };
+th.onchange = () => fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ threshold: +th.value }) });
+
+document.getElementById("enrollBtn").onclick = async () => {
+  const name = document.getElementById("enrollName").value;
+  const r = await fetch("/api/enroll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  toast((await r.json()).msg);
+};
+
+document.getElementById("rebuildBtn").onclick = async (e) => {
+  e.target.disabled = true; e.target.textContent = "Yenileniyor…";
+  const r = await (await fetch("/api/rebuild", { method: "POST" })).json();
+  people = []; e.target.disabled = false; e.target.textContent = "Galeriyi yenile";
+  toast("Galeri güncellendi: " + Object.entries(r.people).map(([n, c]) => `${n} (${c})`).join(", "));
+};
+
+document.addEventListener("keydown", async (e) => {
+  if (e.key.toLowerCase() !== "q" || e.target.matches("input, select, textarea")) return;
+  await fetch("/api/quit", { method: "POST" }).catch(() => {});
+  document.body.innerHTML = `<div style="min-height:90vh;display:grid;place-items:center;text-align:center">
+    <div><h1>Kapatıldı</h1><div class="sub" style="margin-top:8px">Kamera serbest bırakıldı. Bu sekmeyi kapatabilirsin.</div></div></div>`;
+});
+
+poll();
+</script>
+</body>
+</html>

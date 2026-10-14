@@ -1,0 +1,7 @@
+ultralytics>=8.3
+opencv-python>=4.10
+numpy
+torch
+fastapi
+uvicorn
+pydantic

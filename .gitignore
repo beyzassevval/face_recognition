@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.vscode/
+.ipynb_checkpoints/
+
+# Üçüncü kişi yüz verisi ve bundan türetilen modeller repoya girmez
+faces/tolga/
+face_recognizer.yml
+models/gallery.pkl
