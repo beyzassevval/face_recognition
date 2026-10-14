@@ -1,0 +1,16 @@
+# Kişisel veri: görüntüler, kırpılmış yüzler ve tüm çıktılar git'e EKLENMEZ
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.npz
+outputs/
+data/
+
+# Model ağırlıkları ve indirilen veri setleri
+models/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

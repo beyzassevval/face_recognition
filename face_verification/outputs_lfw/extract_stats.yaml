@@ -1,0 +1,27 @@
+A_scrfd_arcface:
+  detector: scrfd
+  embedder: arcface
+  n_images: 250
+  n_embedded: 249
+  detection_rate: 0.996
+  n_multi_face: 35
+  mean_det_ms: 24.86660719991778
+  mean_emb_ms: 11.398685943919943
+B_mtcnn_facenet:
+  detector: mtcnn
+  embedder: facenet
+  n_images: 250
+  n_embedded: 250
+  detection_rate: 1.0
+  n_multi_face: 35
+  mean_det_ms: 52.27270240007783
+  mean_emb_ms: 25.394573599711293
+C_scrfd_facenet:
+  detector: scrfd
+  embedder: facenet
+  n_images: 250
+  n_embedded: 249
+  detection_rate: 0.996
+  n_multi_face: 35
+  mean_det_ms: 24.86660719991778
+  mean_emb_ms: 23.794679919880277

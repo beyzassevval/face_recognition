@@ -1,0 +1,63 @@
+# =============================================================
+# Yüz doğrulama deney konfigürasyonu
+# Tüm script'ler (run_all.py ve src/*.py) ayarları buradan okur.
+# =============================================================
+
+data:
+  # Kendi görüntülerimiz: her alt klasör bir kişi (klasör adı = etiket)
+  root: "C:/Users/BEYZA/OneDrive/Desktop/face_detect/faces"
+  extensions: [".jpg", ".jpeg", ".png"]   # .mp4 gibi diğer dosyalar yok sayılır
+  min_images_per_person: 2                 # bundan az görüntüsü olan kişi atlanır
+  max_side: 1600                           # büyük telefon fotoğrafları bu boyuta küçültülür (hız için)
+
+  # Opsiyonel: LFW'den "distractor" (şaşırtıcı) kişi ekleme
+  lfw:
+    enabled: false
+    n_people: 8                  # eklenecek LFW kişi sayısı
+    min_faces_per_person: 20     # fetch_lfw_people parametresi
+    max_images_per_person: 20    # LFW kişisi başına en fazla görüntü (dengesizliği azaltır)
+    seed: 42
+
+# Model ağırlıkları ve indirilen veri setleri (C: dolu olduğu için proje içinde)
+paths:
+  models_dir: "models"
+  outputs_dir: "outputs"
+
+device: "cuda"   # "cuda" veya "cpu"
+
+detectors:
+  scrfd:
+    model_pack: "buffalo_l"      # insightface model paketi (SCRFD-10G + ArcFace R50)
+    det_size: [640, 640]
+    det_thresh: 0.5
+  mtcnn:
+    min_face_size: 20
+    thresholds: [0.6, 0.7, 0.7]
+
+# Birden fazla yüz bulunursa hangisi seçilsin: "largest" (en büyük kutu) veya "score"
+face_selection: "largest"
+
+embedders:
+  arcface:
+    model_pack: "buffalo_l"
+  facenet:
+    pretrained: "vggface2"
+    image_size: 160
+    # Kutuya eklenen pay (facenet-pytorch kuralı: 160'lık çıktı ölçeğinde piksel).
+    # B ve C aynı kırpma fonksiyonunu kullanır; aradaki tek fark dedektör kutusudur.
+    margin: 20
+
+# Karşılaştırılacak konfigürasyonlar: ad -> (dedektör, embedder)
+configs:
+  A_scrfd_arcface:  {detector: scrfd, embedder: arcface}
+  B_mtcnn_facenet:  {detector: mtcnn, embedder: facenet}
+  C_scrfd_facenet:  {detector: scrfd, embedder: facenet}
+
+tsne:
+  perplexities: [5, 15, 30]
+  max_iter: 1000
+  pca_dim: 50          # örnek sayısı < embedding boyutu ise önce PCA(50)
+  random_state: 42
+
+plots:
+  dpi: 300
