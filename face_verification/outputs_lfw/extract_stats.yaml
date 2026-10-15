@@ -5,8 +5,8 @@ A_scrfd_arcface:
   n_embedded: 249
   detection_rate: 0.996
   n_multi_face: 35
-  mean_det_ms: 20.786213199935446
-  mean_emb_ms: 9.115888754966722
+  mean_det_ms: 20.109440799773438
+  mean_emb_ms: 8.720067068471584
 B_mtcnn_facenet:
   detector: mtcnn
   embedder: facenet
@@ -14,8 +14,8 @@ B_mtcnn_facenet:
   n_embedded: 250
   detection_rate: 1.0
   n_multi_face: 35
-  mean_det_ms: 46.42778879999241
-  mean_emb_ms: 27.77986000000965
+  mean_det_ms: 45.227844399996684
+  mean_emb_ms: 25.326118000099086
 C_scrfd_facenet:
   detector: scrfd
   embedder: facenet
@@ -23,8 +23,8 @@ C_scrfd_facenet:
   n_embedded: 249
   detection_rate: 0.996
   n_multi_face: 35
-  mean_det_ms: 20.786213199935446
-  mean_emb_ms: 25.316531325301636
+  mean_det_ms: 20.109440799773438
+  mean_emb_ms: 24.30065742977107
 D_yolo_arcface:
   detector: yolo
   embedder: arcface
@@ -32,8 +32,8 @@ D_yolo_arcface:
   n_embedded: 250
   detection_rate: 1.0
   n_multi_face: 33
-  mean_det_ms: 16.107369200035464
-  mean_emb_ms: 9.17086800000834
+  mean_det_ms: 15.494999600079609
+  mean_emb_ms: 8.611336399961147
 E_yolo_facenet:
   detector: yolo
   embedder: facenet
@@ -41,5 +41,5 @@ E_yolo_facenet:
   n_embedded: 250
   detection_rate: 1.0
   n_multi_face: 33
-  mean_det_ms: 16.107369200035464
-  mean_emb_ms: 26.3773252000683
+  mean_det_ms: 15.494999600079609
+  mean_emb_ms: 25.642010000083246

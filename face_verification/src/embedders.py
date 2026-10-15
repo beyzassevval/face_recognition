@@ -7,6 +7,8 @@ Her embedder iki adımdan oluşur:
        - ArcFace: 5 noktadan similarity-transform ile 112x112 hizalanmış yüz
        - FaceNet: kutudan margin eklenerek 160x160 kırpılmış yüz (hizalama yok)
   2) embed(crop): 512 boyutlu, L2 normalize edilmiş vektör döndürür.
+     embed_raw(crop) normalize edilmemiş vektörü verir; normu kalite ölçüsü olarak
+     kullanılır (ArcFace ailesinde düşük norm genelde düşük kaliteli yüz demektir).
 
 Bu ayrım sayesinde aynı embedder farklı dedektörlerle kullanılabilir
 (C konfigürasyonu: SCRFD kutusu + FaceNet kırpması).
@@ -37,8 +39,12 @@ class FaceEmbedder(ABC):
         """Modelin girdisi olacak BGR uint8 yüz görüntüsü (input_size x input_size)."""
 
     @abstractmethod
+    def embed_raw(self, face_bgr: np.ndarray) -> np.ndarray:
+        """Normalize edilmemiş 1-B embedding vektörü."""
+
     def embed(self, face_bgr: np.ndarray) -> np.ndarray:
         """L2 normalize edilmiş 1-B embedding vektörü."""
+        return l2_normalize(self.embed_raw(face_bgr))
 
 
 class ArcFaceEmbedder(FaceEmbedder):
@@ -58,10 +64,9 @@ class ArcFaceEmbedder(FaceEmbedder):
         # (döndürme + ölçek + öteleme) ile 112x112 hizalanmış yüz
         return face_align.norm_crop(img_bgr, landmark=det.landmarks, image_size=self.input_size)
 
-    def embed(self, face_bgr):
+    def embed_raw(self, face_bgr):
         # get_feat: BGR->RGB, (x-127.5)/127.5 normalizasyonu ve ONNX çıkarımı içeride yapılır
-        feat = self.model.get_feat(face_bgr).ravel().astype(np.float32)
-        return l2_normalize(feat)
+        return self.model.get_feat(face_bgr).ravel().astype(np.float32)
 
 
 class FaceNetEmbedder(FaceEmbedder):
@@ -78,6 +83,10 @@ class FaceNetEmbedder(FaceEmbedder):
         self.torch = torch
         self.device = torch.device(device if (device == "cpu" or torch.cuda.is_available()) else "cpu")
         self.model = InceptionResnetV1(pretrained=pretrained).eval().to(self.device)
+        # Model forward'un sonunda F.normalize uyguluyor; ham vektörü (ve normunu)
+        # almak için normalizasyondan hemen önceki last_bn çıktısını yakalıyoruz.
+        self._raw = None
+        self.model.last_bn.register_forward_hook(lambda m, i, o: setattr(self, "_raw", o))
         self.input_size = image_size
         self.margin = margin
 
@@ -96,15 +105,15 @@ class FaceNetEmbedder(FaceEmbedder):
         face = img_bgr[by1:by2, bx1:bx2]
         return cv2.resize(face, (s, s), interpolation=cv2.INTER_AREA)
 
-    def embed(self, face_bgr):
+    def embed_raw(self, face_bgr):
         torch = self.torch
         rgb = face_bgr[:, :, ::-1].astype(np.float32)
         # facenet-pytorch'un "fixed_image_standardization" normalizasyonu
         x = (rgb - 127.5) / 128.0
         x = torch.from_numpy(x.transpose(2, 0, 1).copy()).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            feat = self.model(x)[0].cpu().numpy().astype(np.float32)
-        return l2_normalize(feat)
+            self.model(x)
+        return self._raw[0].cpu().numpy().astype(np.float32)
 
 
 # Ad -> sınıf eşlemesi (yeni embedder'lar buraya eklenir)

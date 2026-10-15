@@ -71,8 +71,9 @@ def main() -> None:
     from src.extract import run_extraction
     from src.metrics import (compute_metrics, load_npz, open_set_eval, plot_histograms,
                              plot_open_set, plot_roc)
-    from src.extra_plots import (plot_hard_examples, plot_person_similarity, plot_speed_accuracy,
-                                 plot_threshold_sweep)
+    from src.extra_plots import (plot_hard_examples, plot_person_similarity, plot_quality_rejects,
+                                 plot_speed_accuracy, plot_threshold_sweep)
+    from src.quality import measure_correlations, quality_masks
     from src.visualize import make_tsne_plots
 
     out_dir = Path(cfg["paths"]["outputs_dir"])
@@ -99,13 +100,26 @@ def main() -> None:
 
     # 3) Metrikler
     npz_paths = {n: out_dir / "embeddings" / f"{n}.npz" for n in config_names}
-    metrics, raws, open_set, open_rows, datasets = {}, {}, {}, [], {}
+    metrics, raws, open_set, open_pre, open_rows, datasets, corr = {}, {}, {}, {}, [], {}, {}
     for n, p in npz_paths.items():
-        data = datasets[n] = load_npz(p)
-        metrics[n], raws[n] = compute_metrics(data)
+        datasets[n] = load_npz(p)
+        metrics[n], raws[n] = compute_metrics(datasets[n])
+
+    # Kalite kontrolü: geçemeyen kareler galeriye girmez, prob olarak "kalite reddi" sayılır
+    qcfg = cfg.get("quality", {})
+    if qcfg.get("enabled", False):
+        q_ok, q_reason, q_detail = quality_masks(datasets, cfg["configs"], qcfg)
+    else:
+        q_ok = {n: None for n in datasets}; q_reason = dict(q_ok); q_detail = {}
+
+    for n, data in datasets.items():
         # Açık küme testi: eşik = kayıtlı kişilerden hesaplanan EER eşiği
-        open_set[n], rows = open_set_eval(data, metrics[n].get("eer_threshold", float("nan")))
+        thr = metrics[n].get("eer_threshold", float("nan"))
+        open_pre[n], pre_rows = open_set_eval(data, thr)                     # kalite kontrolü öncesi
+        open_set[n], rows = open_set_eval(data, thr, q_ok[n], q_reason[n])  # sonrası
         open_rows += [{"config": n, **r} for r in rows]
+        loo = {r["path"]: r["score"] for r in pre_rows if r["probe"] == "kayıtlı"}
+        corr[n] = measure_correlations(data, loo)
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
     dpi = cfg["plots"]["dpi"]
@@ -126,18 +140,23 @@ def main() -> None:
     rows = []
     for n in config_names:
         osr = {f"open_{k}": v for k, v in open_set[n].items() if k != "_raw"}
-        rows.append({"config": n, **stats[n], **metrics[n], **osr})
+        pre = {f"preqc_{k}": v for k, v in open_pre[n].items() if k != "_raw"}
+        qc = {f"qc_corr_{m}": v for m, v in corr[n].items()}
+        if n in q_detail:
+            qc.update({f"qc_active_{m}": q_detail[n]["note"][m] for m in q_detail[n]["note"]})
+        rows.append({"config": n, **stats[n], **metrics[n], **osr, **pre, **qc})
     keys = list(dict.fromkeys(k for r in rows for k in r))
     with open(out_dir / "results.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         w.writerows(rows)
-    write_summary(rows, out_dir / "summary.md", cfg)
+    write_summary(rows, out_dir / "summary.md", cfg, open_rows)
 
     # 6) Ek karşılaştırma grafikleri
     plot_threshold_sweep(open_set, plots_dir / "threshold_sweep.png", dpi)
     plot_speed_accuracy({out_dir.name: rows}, plots_dir / "speed_accuracy.png", dpi)
     plot_hard_examples(open_rows, out_dir, plots_dir / "hard_examples.png")
+    plot_quality_rejects(open_rows, out_dir, plots_dir / "quality_rejects.png")
     plot_person_similarity(datasets, plots_dir / "person_similarity.png", dpi)
     print(f"\nBitti. Sonuçlar: {out_dir}")
 
@@ -145,10 +164,10 @@ def main() -> None:
 def _fmt(v, kind):
     if v is None or (isinstance(v, float) and v != v):
         return "—"
-    return {"pct": f"{v * 100:.1f}%", "f3": f"{v:.3f}", "f1": f"{v:.1f}"}.get(kind, str(v))
+    return {"pct": f"{v * 100:.1f}%", "f3": f"{v:.3f}", "f2": f"{v:.2f}", "f1": f"{v:.1f}"}.get(kind, str(v))
 
 
-def write_summary(rows: list[dict], path: Path, cfg: dict) -> None:
+def write_summary(rows: list[dict], path: Path, cfg: dict, open_rows: list[dict] | None = None) -> None:
     lfw = cfg["data"]["lfw"]
     lines = [
         "# Sonuç özeti",
@@ -179,7 +198,7 @@ def write_summary(rows: list[dict], path: Path, cfg: dict) -> None:
             "(silhouette/AUC/EER) dahil değildir. Eşik = yukarıdaki EER eşiği. Kayıtlı kişiler "
             "leave-one-out ile test edilir (prob galeriden çıkarılır, en benzer galeri görüntüsüne bakılır).",
             "",
-            "| Konfigürasyon | Eşik | Bilinmeyen prob | Bilinmeyen doğru ret "
+            "| Konfigürasyon | Eşik | Bilinmeyen prob (kalite reddi) | Bilinmeyen doğru ret "
             "| En yüksek bilinmeyen skor (en yakın kişi) | Eşik payı (eşik − skor) | Kayıtlı doğru tanıma "
             "| Kayıtlı yanlış ret | Yanlış kişi | Kayıtlı en düşük skor | Boşluk | Boşluğun ortası |",
             "|---|---|---|---|---|---|---|---|---|---|---|---|",
@@ -187,6 +206,7 @@ def write_summary(rows: list[dict], path: Path, cfg: dict) -> None:
         for r in rows:
             lines.append(
                 f"| {r['config']} | {_fmt(r.get('open_threshold'), 'f3')} | {r.get('open_n_unknown_probes', 0)} "
+                f"({r.get('open_n_quality_reject_unknown', 0)}) "
                 f"| {_fmt(r.get('open_unknown_reject_rate'), 'pct')} "
                 f"| {_fmt(r.get('open_unknown_max_score'), 'f3')} ({r.get('open_unknown_closest', '—')}) "
                 f"| {_fmt(r.get('open_unknown_margin'), 'f3')} "
@@ -202,7 +222,85 @@ def write_summary(rows: list[dict], path: Path, cfg: dict) -> None:
                   "", "Prob başına kararlar: `open_set.csv`. Grafik: `plots/open_set_scores.png`. "
                   "Bilinmeyen prob sayısı çok küçükse (ör. 2 görüntü) ret oranı istatistiksel olarak zayıftır; "
                   "boşluk değeri daha bilgilendiricidir."]
+    if cfg.get("quality", {}).get("enabled"):
+        lines += quality_section(rows, cfg, open_rows or [])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def quality_section(rows: list[dict], cfg: dict, open_rows: list[dict]) -> list[str]:
+    """Kalite kontrolü: kural, reddedilen kareler, ölçü korelasyonları, öncesi/sonrası."""
+    q = cfg["quality"]
+    on = [m for m, mc in q.get("measures", {}).items() if mc.get("enabled")]
+    lines = [
+        "", "## Kalite kontrolü", "",
+        f"Kural: robust z-skoru (medyan / 1.4826·MAD) **< {q.get('z_thresh', -3.0)}** olan kare reddedilir "
+        f"(açık ölçüler: {', '.join(on) or '—'}; kapsam: `{q.get('scope', 'common')}`; medyan/MAD referansı ve "
+        f"uygulama alanı: {', '.join(q.get('reference_sources', ['own', 'unknown']))}, LFW muaf). Reddedilen kare galeriye "
+        "kaydedilmez; prob olarak geldiğinde **kalite reddi** sayılır: tanıma hatası değildir, yanlış ret "
+        "oranına ve skor istatistiklerine girmez.",
+        "",
+    ]
+    # Reddedilen kareler (yol başına bir kez)
+    seen, rej = set(), []
+    for r in open_rows:
+        if r["decision"] == "kalite reddi" and r["path"] not in seen:
+            seen.add(r["path"]); rej.append(r)
+    if rej:
+        lines += ["### Kalite reddi alan kareler (ayrı kategori)", "",
+                  "| Kişi | Prob türü | Dosya | Sebep (ölçü; reddeden konfigürasyonlar ve z) |", "|---|---|---|---|"]
+        for r in rej:
+            lines.append(f"| {r['label']} | {r['probe']} | {Path(r['path']).name} | {r['quality']} |")
+    else:
+        lines += ["Kalite reddi alan kare yok."]
+    lines += ["", "*Düşük keskinlik* = log Laplace varyansı düşük: bulanıklık, düşük ışık/kontrast ya da "
+              "pürüzsüz bir örtme (el). Ölçü bu sebepleri ayırt etmez; ayrım için `plots/quality_rejects.png` "
+              "görseline bakılmalı."]
+    lines += [
+        "", "### Kalite ölçüsü ile tanıma skoru ilişkisi (kalite kontrolü öncesi)", "",
+        "Kayıtlı probların LOO skoru ile ölçü arasındaki Spearman korelasyonu. Pozitif: ölçü düştükçe "
+        "skor da düşüyor, yani ölçü kalite göstergesi olarak işe yarıyor. Negatif ya da sıfıra yakın: "
+        "o model için kalite kapısında kullanılmamalı.", "",
+        "| Konfigürasyon | Keskinlik (log Laplace) | Dedektör skoru | Embedding normu |", "|---|---|---|---|",
+    ]
+
+    def cell(r, m):
+        note = r.get(f"qc_active_{m}")
+        return _fmt(r.get(f"qc_corr_{m}"), "f2") + ("" if note in (None, "açık") else f" ({note})")
+
+    for r in rows:
+        lines.append(f"| {r['config']} | {cell(r, 'blur')} | {cell(r, 'det_score')} | {cell(r, 'raw_norm')} |")
+    lines += [
+        "", "### Aralık: kalite kontrolü öncesi → sonrası", "",
+        "*Boşluk (bilinmeyen)*: kayıtlı min − bilinmeyen kişi max (yukarıdaki tablo). "
+        "*Boşluk (tüm sahte)*: sahte skorlara kişi dışarıda bırakma (LOPO) skorları da eklenir; her kayıtlı "
+        "probun başka kişilerin galerisine en yüksek benzerliği. Ham boşluk modelin skor ölçeğine bağlıdır "
+        "(FaceNet skorları ArcFace'ten yüksek ve daha dar dağılır). Bu yüzden modeller arası karşılaştırma "
+        "**ölçekten bağımsız** ölçülerle yapılmalı:", "",
+        "- **Normalize boşluk** = boşluk (tüm sahte) / birleşik std, birleşik std = √((σ²_kayıtlı + σ²_sahte)/2)",
+        "- **d′** = (ort_kayıtlı − ort_sahte) / birleşik std. Uç değerlere değil ortalamalara dayandığı için "
+        "örnek sayısına daha az duyarlıdır.", "",
+        "| Konfigürasyon | Kalite reddi (kayıtlı + bilinmeyen) | Boşluk (bilinmeyen) | Boşluk (tüm sahte) "
+        "| Birleşik std | **Normalize boşluk** | **d′** | Sahte skor sayısı |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+
+    def arrow(a, b, k):
+        return f"{_fmt(a, k)} → {_fmt(b, k)}"
+
+    for r in rows:
+        nq = (r.get("open_n_quality_reject_known") or 0) + (r.get("open_n_quality_reject_unknown") or 0)
+        lines.append(
+            f"| {r['config']} | {nq} | {arrow(r.get('preqc_score_gap'), r.get('open_score_gap'), 'f3')} "
+            f"| {arrow(r.get('preqc_gap_all'), r.get('open_gap_all'), 'f3')} "
+            f"| {arrow(r.get('preqc_pooled_std'), r.get('open_pooled_std'), 'f3')} "
+            f"| {arrow(r.get('preqc_norm_gap'), r.get('open_norm_gap'), 'f2')} "
+            f"| {arrow(r.get('preqc_d_prime'), r.get('open_d_prime'), 'f2')} "
+            f"| {r.get('open_n_impostor_scores', '—')} |")
+    lines += ["", "Normalize boşluk ve d′ birimsizdir (std cinsinden); büyük olan daha iyi ayrıştırır. "
+              "Normalize boşluk min/max uç değerlerine dayandığı için örnek sayısı büyüdükçe küçülme eğilimindedir; "
+              "farklı büyüklükteki veri setleri arasında d′ daha güvenilir karşılaştırma verir.",
+              "", "Görsel: `plots/quality_rejects.png` (reddedilen kareler ve sebepleri)."]
+    return lines
 
 
 if __name__ == "__main__":

@@ -42,6 +42,23 @@ detectors:
     conf: 0.5
     half: false                      # FP16; diğer dedektörlerle adil süre kıyası için kapalı
 
+# Kalite kontrolü (src/quality.py): geçemeyen kare galeriye girmez, prob olarak
+# "kalite reddi" sayılır (tanıma hatası değil, ayrı kategori).
+quality:
+  enabled: true
+  z_thresh: -3.0      # robust z (medyan/MAD) bunun altındaysa ret; standart aykırı değer kuralı
+  scope: common       # common: bir konfigürasyonda reddedilen kare hepsinde reddedilir (adil kıyas)
+                      # per_config: her konfigürasyon kendi kararını verir
+  # Medyan/MAD hangi örneklerden hesaplansın ve kapı kimlere uygulansın: sınav kamerası verisi.
+  # LFW farklı bir alan (düşük çözünürlüklü web görüntüsü); referansa katılırsa kendi bulanık
+  # karelerimizi "normal" gösterir. Distractor olarak kullanıldığı için kapıdan muaf.
+  reference_sources: [own, unknown]
+  apply_to_sources:  [own, unknown]
+  measures:
+    blur:      {enabled: true}                         # keskinlik (log Laplace varyansı); tüm modellerde skorla pozitif ilişkili
+    det_score: {enabled: false, min_rel_spread: 0.005} # MTCNN'de doyuyor (MAD≈0), YOLO'da bant çok dar
+    raw_norm:  {enabled: false, embedders: [arcface]}  # norm-kalite ilişkisi yalnızca ArcFace'te var
+
 # Birden fazla yüz bulunursa hangisi seçilsin: "largest" (en büyük kutu) veya "score"
 face_selection: "largest"
 

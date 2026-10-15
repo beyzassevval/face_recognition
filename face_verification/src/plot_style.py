@@ -7,6 +7,8 @@ renk körlüğü (CVD) ayrımını geçen doğrulanmış bir palettir; 5. kişi 
 alır. Her kişinin ayrıca farklı bir marker şekli vardır, yani kimlik yalnızca renge
 bağlı değildir. LFW (distractor) kişileri içi boş gri marker ile çizilir.
 """
+import time
+
 import matplotlib.pyplot as plt
 
 OWN_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7", "#3d3c39"]
@@ -43,3 +45,16 @@ def apply_style():
         "ytick.color": "#52514e",
         "font.size": 9,
     })
+
+
+def save_fig(fig, path, retries: int = 3, **kw) -> None:
+    """fig.savefig + kısa yeniden deneme. Windows'ta başka bir işlem (Defender, dizinleyici,
+    görüntüleyici) dosyayı anlık tuttuğunda savefig ara sıra OSError [Errno 22] veriyor."""
+    for k in range(retries):
+        try:
+            fig.savefig(path, **kw)
+            return
+        except OSError:
+            if k == retries - 1:
+                raise
+            time.sleep(0.5 * (k + 1))

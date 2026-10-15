@@ -101,7 +101,8 @@ src/embedders.py     FaceEmbedder arayüzü: ArcFace, FaceNet (kırpma/hizalama 
 src/extract.py       tespit → kırpma → embedding → kaydet, süre ölçümü
 src/metrics.py       silhouette, benzerlik histogramları, ROC/AUC/EER
 src/visualize.py     t-SNE grafikleri
-src/extra_plots.py   eşik taraması, hız–doğruluk, en zor örnekler, kişi×kişi ısı haritası
+src/extra_plots.py   eşik taraması, hız–doğruluk, en zor örnekler, kişi×kişi ısı haritası, kalite reddi
+src/quality.py       kalite kontrolü (keskinlik / dedektör skoru / embedding normu, robust z)
 src/plot_style.py    ortak renkler/stil
 ```
 
@@ -130,6 +131,7 @@ ArcFace ile, yalnızca kutu veren her dedektör FaceNet ile kullanılabilir.
 | `plots/threshold_sweep.png` | eşik taraması: kayıtlı doğru tanıma ve bilinmeyen ret oranı, ikisinin de %100 olduğu güvenli aralık gölgeli |
 | `plots/speed_accuracy.png` | hız (tespit + embedding ms) – boşluk ve hız – EER, iki ayrı panel |
 | `plots/hard_examples.png` | en zor örnekler: bilinmeyen kişi ve en düşük skorlu kayıtlı probların kırpması, galerideki en yakın yüzle yan yana |
+| `plots/quality_rejects.png` | kalite kontrolünden geçemeyen kareler ve sebepleri |
 | `plots/person_similarity.png` | kişi × kişi ortalama kosinüs benzerliği ısı haritası (köşegen = kişi içi) |
 
 İki çalıştırmayı (ör. LFW'siz / LFW'li) tek hız grafiğinde karşılaştırmak için:
@@ -149,6 +151,32 @@ Tüm metrikler **512-B uzayda** hesaplanır, 2-B t-SNE çıktısında hesaplanma
   kullanılabilir (bu küçük veriyle kesin bir değer değildir).
 - **Süreler:** Görüntü başına, GPU'da, batch=1, ısınma turundan sonra ölçülür. Tespit süresine görüntü
   okuma dahil değildir. Embedding süresine kırpma/hizalama dahildir.
+
+### Kalite kontrolü
+Bulanık, karanlık/düşük kontrastlı ya da el ile örtülmüş kareler **tanıma hatası değil, kalite hatası**dır
+ve ayrı bir kategoride raporlanır (`config.yaml` → `quality`). Kapıdan geçemeyen kare galeriye kaydedilmez;
+prob olarak geldiğinde karar "kalite reddi" olur, yanlış ret oranına ve skor istatistiklerine girmez.
+
+- **Ölçüler:** keskinlik (log Laplace varyansı, varsayılan açık), dedektör skoru ve embedding normu
+  (ikisi de varsayılan kapalı). `summary.md`, her ölçünün tanıma skoruyla Spearman korelasyonunu
+  konfigürasyon başına verir. Keskinlik 5 konfigürasyonun hepsinde pozitif ilişkili. Embedding normu
+  yalnızca ArcFace'te pozitif, FaceNet'te negatif. Dedektör skoru MTCNN'de 1.00'da doyuyor.
+- **Kural:** robust z (medyan / 1.4826·MAD) < −3 olan kare reddedilir. Medyan ve MAD yalnızca sınav
+  kamerası verisinden hesaplanır (`reference_sources`), LFW kapıdan muaftır. Aksi halde düşük
+  çözünürlüklü LFW kareleri referansı aşağı çekip kendi bulanık karelerimizi "normal" gösteriyordu.
+- **Kapsam:** `common` ayarında bir kare herhangi bir konfigürasyonda reddedilirse hepsinden çıkarılır,
+  böylece modeller aynı kare kümesiyle karşılaştırılır. `per_config` gerçek kullanımı taklit eder.
+- **Sınır:** "düşük keskinlik" bulanıklığı, düşük ışığı ve pürüzsüz örtmeyi birbirinden ayırmaz.
+  Kafa pozunu (profil, aşağıdan çekim) hiç yakalamaz; pozdan kaynaklanan zor kareler kapıdan geçer.
+
+### Ölçekten bağımsız karşılaştırma
+Ham skor aralıkları modelden modele farklıdır (FaceNet benzerlikleri ArcFace'ten yüksek ve daha dar
+dağılır), bu yüzden ham "boşluk" modeller arasında doğrudan karşılaştırılamaz. Özet, iki birimsiz ölçü
+verir. Sahte skorlar = bilinmeyen kişi + **kişi dışarıda bırakma** (her kayıtlı probun başka kişilerin
+galerisine en yüksek benzerliği). Böylece std hesabı için yeterli sayıda sahte skor oluşur.
+- **Normalize boşluk** = (kayıtlı min − sahte max) / √((σ²_kayıtlı + σ²_sahte)/2)
+- **d′** = (ort_kayıtlı − ort_sahte) / aynı birleşik std. Uç değerlere dayanmadığı için örnek sayısına
+  daha az duyarlıdır; farklı büyüklükteki veri setlerini karşılaştırırken bunu kullanın.
 
 ### t-SNE hakkında
 t-SNE yalnızca **yerel komşulukları** korur. 2-B grafikteki kümeler arası mesafeler, küme boyutları ve

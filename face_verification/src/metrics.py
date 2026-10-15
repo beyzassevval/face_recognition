@@ -24,7 +24,7 @@ from matplotlib.lines import Line2D
 from sklearn.metrics import roc_auc_score, roc_curve, silhouette_score
 
 from .data import SOURCE_UNKNOWN
-from .plot_style import CONFIG_COLORS, UNKNOWN_COLOR, UNKNOWN_MARKER, apply_style
+from .plot_style import CONFIG_COLORS, UNKNOWN_COLOR, UNKNOWN_MARKER, apply_style, save_fig
 
 
 def load_npz(path: str | Path) -> dict:
@@ -95,45 +95,77 @@ def _best_match(sim_row: np.ndarray, labels: np.ndarray, mask: np.ndarray) -> tu
     return str(labels[j]), float(sim_row[j]), int(j)
 
 
-def open_set_eval(data: dict, threshold: float) -> tuple[dict, list[dict]]:
+def open_set_eval(data: dict, threshold: float, quality_ok: np.ndarray | None = None,
+                  quality_reason: np.ndarray | None = None) -> tuple[dict, list[dict]]:
     """Açık küme tanıma testi.
 
-    Galeri = kayıtlı kişilerin tüm görüntüleri. Her prob için galerideki en benzer
-    görüntü bulunur; skor >= eşik ise o kişi olarak kabul, değilse "bilinmeyen".
+    Galeri = kayıtlı kişilerin kalite kontrolünden geçen görüntüleri. Her prob için
+    galerideki en benzer görüntü bulunur; skor >= eşik ise o kişi olarak kabul,
+    değilse "bilinmeyen".
+      * Kalite kontrolünden geçemeyen prob -> "kalite reddi" (ayrı kategori; tanıma
+        hatası sayılmaz, skor istatistiklerine girmez)
       * Kayıtlı prob (leave-one-out: probun kendisi galeriden çıkarılır):
           doğru tanıma / yanlış ret / yanlış kişi
       * Bilinmeyen prob (galeride hiç görüntüsü yok):
           doğru ret (skor < eşik) / yanlış kabul
-    Ayrıca "tüm bilinmeyenleri reddeden en düşük eşik" ve o eşikteki doğru tanıma oranı.
+
+    Sahte (impostor) skorlar iki kaynaktan gelir:
+      * gerçek bilinmeyen kişi(ler)in skorları (ör. muhammet; az sayıda)
+      * kişi dışarıda bırakma (leave-one-person-out): her kayıtlı probun BAŞKA kişilerin
+        galerisine en yüksek benzerliği, yani o kişi kayıtlı olmasaydı alacağı skor.
+        Bu, std hesabı için yeterli sayıda sahte skor sağlar.
+
+    Ölçekten bağımsız ölçüler (modeller arası karşılaştırma için):
+      * norm_gap = (kayıtlı min − sahte max) / birleşik std
+      * d_prime  = (kayıtlı ort − sahte ort) / birleşik std
+    birleşik std = sqrt((std_kayıtlı² + std_sahte²) / 2)
     """
     emb, labels, sources = data["embeddings"], data["labels"], data["sources"]
+    n = len(emb)
+    ok = np.ones(n, dtype=bool) if quality_ok is None else np.asarray(quality_ok, dtype=bool)
+    why = np.array([""] * n, dtype=object) if quality_reason is None else quality_reason
     unknown = sources == SOURCE_UNKNOWN
     known = ~unknown
-    out = {"threshold": threshold, "n_known_probes": int(known.sum()), "n_unknown_probes": int(unknown.sum())}
+    gallery = known & ok
+    out = {"threshold": threshold, "n_known_probes": int(known.sum()), "n_unknown_probes": int(unknown.sum()),
+           "n_quality_reject_known": int((known & ~ok).sum()),
+           "n_quality_reject_unknown": int((unknown & ~ok).sum())}
     rows: list[dict] = []
-    if not known.any() or not np.isfinite(threshold):
+    if not gallery.any() or not np.isfinite(threshold):
         return out, rows
     sim = emb @ emb.T
-    paths = data.get("paths", np.array([""] * len(emb)))
+    paths = data.get("paths", np.array([""] * n))
 
-    gen_scores, gen_correct = [], []
+    def row(i, probe, who, sc, j, decision):
+        return {"path": str(paths[i]), "label": str(labels[i]), "probe": probe, "best_match": who,
+                "best_match_path": str(paths[j]) if j >= 0 else "", "score": sc,
+                "decision": decision, "quality": why[i] or "ok"}
+
+    gen_scores, gen_correct, lopo = [], [], []
     for i in np.flatnonzero(known):
-        mask = known.copy(); mask[i] = False
+        mask = gallery.copy(); mask[i] = False
+        if not ok[i]:
+            who, sc, j = _best_match(sim[i], labels, mask)
+            rows.append(row(i, "kayıtlı", who, sc, j, "kalite reddi"))
+            continue
         # Galeride bu kişinin başka görüntüsü kalmadıysa leave-one-out anlamsız
         if not (mask & (labels == labels[i])).any():
             continue
         who, sc, j = _best_match(sim[i], labels, mask)
         gen_scores.append(sc); gen_correct.append(who == labels[i])
-        rows.append({"path": str(paths[i]), "label": str(labels[i]), "probe": "kayıtlı",
-                     "best_match": who, "best_match_path": str(paths[j]), "score": sc,
-                     "decision": (who if sc >= threshold else "bilinmeyen")})
+        rows.append(row(i, "kayıtlı", who, sc, j, who if sc >= threshold else "bilinmeyen"))
+        # Kişi dışarıda bırakma: bu kişinin tüm görüntüleri galeriden çıkarılırsa
+        _, sc_lopo, _ = _best_match(sim[i], labels, gallery & (labels != labels[i]))
+        if np.isfinite(sc_lopo):
+            lopo.append(sc_lopo)
     imp_scores, imp_who = [], []
     for i in np.flatnonzero(unknown):
-        who, sc, j = _best_match(sim[i], labels, known)
+        who, sc, j = _best_match(sim[i], labels, gallery)
+        if not ok[i]:
+            rows.append(row(i, "bilinmeyen", who, sc, j, "kalite reddi"))
+            continue
         imp_scores.append(sc); imp_who.append(who)
-        rows.append({"path": str(paths[i]), "label": str(labels[i]), "probe": "bilinmeyen",
-                     "best_match": who, "best_match_path": str(paths[j]), "score": sc,
-                     "decision": (who if sc >= threshold else "bilinmeyen")})
+        rows.append(row(i, "bilinmeyen", who, sc, j, who if sc >= threshold else "bilinmeyen"))
 
     g, c = np.array(gen_scores), np.array(gen_correct, dtype=bool)
     if len(g):
@@ -155,7 +187,24 @@ def open_set_eval(data: dict, threshold: float) -> tuple[dict, list[dict]]:
             # > 0 ise bu veride ikisini kusursuz ayıran bir eşik aralığı vardır
             out["score_gap"] = float(g.min() - u[k])
             out["gap_midpoint"] = float((g.min() + u[k]) / 2)
-    raw = {"genuine": g, "genuine_correct": c, "impostor": np.array(imp_scores)}
+
+    # Ölçekten bağımsız ölçüler: sahte skorlar = bilinmeyen + kişi dışarıda bırakma
+    imp_all = np.array(imp_scores + lopo)
+    if len(g) > 1 and len(imp_all) > 1:
+        pooled = float(np.sqrt((g.std(ddof=1) ** 2 + imp_all.std(ddof=1) ** 2) / 2))
+        gap_all = float(g.min() - imp_all.max())
+        out.update({
+            "n_impostor_scores": int(len(imp_all)),
+            "genuine_mean": float(g.mean()), "genuine_std": float(g.std(ddof=1)),
+            "impostor_mean": float(imp_all.mean()), "impostor_std": float(imp_all.std(ddof=1)),
+            "impostor_max": float(imp_all.max()),
+            "pooled_std": pooled,
+            "gap_all": gap_all,                                   # sahte = bilinmeyen + LOPO
+            "norm_gap": gap_all / pooled if pooled > 0 else float("nan"),
+            "d_prime": float((g.mean() - imp_all.mean()) / pooled) if pooled > 0 else float("nan"),
+        })
+    raw = {"genuine": g, "genuine_correct": c, "impostor": np.array(imp_scores),
+           "lopo": np.array(lopo)}
     return {**out, "_raw": raw}, rows
 
 
@@ -183,7 +232,7 @@ def plot_histograms(raws: dict, metrics: dict, out_path: Path, dpi: int = 300) -
     axes[0][0].set_ylabel("Yoğunluk")
     fig.suptitle("Aynı kişi / farklı kişi kosinüs benzerliği dağılımları (512-B uzay)", fontsize=11)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=dpi)
+    save_fig(fig, out_path, dpi=dpi)
     plt.close(fig)
 
 
@@ -207,7 +256,7 @@ def plot_roc(raws: dict, metrics: dict, out_path: Path, dpi: int = 300) -> None:
     ax.set_xlim(-0.01, 1.01); ax.set_ylim(-0.01, 1.01)
     ax.legend(fontsize=8, loc="lower right", frameon=False)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=dpi)
+    save_fig(fig, out_path, dpi=dpi)
     plt.close(fig)
 
 
@@ -247,5 +296,5 @@ def plot_open_set(results: dict, out_path: Path, dpi: int = 300) -> None:
     ax.legend(handles=handles, fontsize=7.5, loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=False)
     ax.set_title("Açık küme testi: eşik üstü = kabul, eşik altı = \"bilinmeyen\"", fontsize=10)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=dpi)
+    save_fig(fig, out_path, dpi=dpi)
     plt.close(fig)

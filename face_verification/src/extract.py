@@ -32,6 +32,14 @@ def _save_jpg(path: Path, img_bgr: np.ndarray) -> None:
         buf.tofile(str(path))
 
 
+def blur_score(face_bgr: np.ndarray, size: int = 112) -> float:
+    """Keskinlik: Laplace varyansı (düşük = bulanık). Kırpma boyutundan bağımsız olsun
+    diye önce sabit boyuta getirilir; böylece ArcFace (112) ve FaceNet (160) kırpmaları
+    aynı ölçekte karşılaştırılabilir."""
+    g = cv2.cvtColor(cv2.resize(face_bgr, (size, size), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(g, cv2.CV_64F).var())
+
+
 def _crop_name(sample: Sample) -> str:
     return f"{sample.label}/{Path(sample.path).stem}.jpg"
 
@@ -65,7 +73,8 @@ def run_extraction(cfg: dict, samples: list[Sample], config_names: list[str] | N
 
     # Konfigürasyon başına sonuç biriktirici
     res = {name: {"emb": [], "label": [], "source": [], "path": [], "det_ms": [], "emb_ms": [],
-                  "score": [], "n_faces": []} for name in configs}
+                  "score": [], "n_faces": [], "blur": [], "raw_norm": [], "face_px": []}
+           for name in configs}
     failures = []          # (config, path, label, sebep)
     det_ms_all = {d: [] for d in detectors}   # tüm görüntülerde tespit süresi (yüz bulunmasa da)
 
@@ -101,7 +110,8 @@ def run_extraction(cfg: dict, samples: list[Sample], config_names: list[str] | N
             if crop is None:
                 failures.append((name, s.path, s.label, "kırpma/hizalama başarısız"))
                 continue
-            vec = emb.embed(crop)
+            raw = emb.embed_raw(crop)
+            vec = raw / max(float(np.linalg.norm(raw)), 1e-10)
             emb_ms = (time.perf_counter() - t0) * 1000
 
             _save_jpg(out_dir / "crops" / name / _crop_name(s), crop)
@@ -109,6 +119,10 @@ def run_extraction(cfg: dict, samples: list[Sample], config_names: list[str] | N
             r["emb"].append(vec); r["label"].append(s.label); r["source"].append(s.source)
             r["path"].append(s.path); r["det_ms"].append(det_ms); r["emb_ms"].append(emb_ms)
             r["score"].append(face.score); r["n_faces"].append(len(faces))
+            # Kalite ölçüleri (süre ölçümünün dışında)
+            r["blur"].append(blur_score(crop)); r["raw_norm"].append(float(np.linalg.norm(raw)))
+            x1, y1, x2, y2 = face.bbox
+            r["face_px"].append(float(min(x2 - x1, y2 - y1)))
 
         if i % 10 == 0 or i == len(samples):
             print(f"[extract] {i}/{len(samples)} görüntü işlendi")
@@ -122,7 +136,8 @@ def run_extraction(cfg: dict, samples: list[Sample], config_names: list[str] | N
                  labels=np.array(r["label"]), sources=np.array(r["source"]),
                  paths=np.array(r["path"]), det_ms=np.array(r["det_ms"]),
                  emb_ms=np.array(r["emb_ms"]), det_scores=np.array(r["score"]),
-                 n_faces=np.array(r["n_faces"]))
+                 n_faces=np.array(r["n_faces"]), blur=np.array(r["blur"]),
+                 raw_norm=np.array(r["raw_norm"]), face_px=np.array(r["face_px"]))
         dname = configs[name]["detector"]
         n_ok = len(r["emb"])
         stats[name] = {

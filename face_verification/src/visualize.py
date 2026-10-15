@@ -19,7 +19,7 @@ from sklearn.manifold import TSNE
 
 from .data import SOURCE_LFW, SOURCE_UNKNOWN
 from .plot_style import (LFW_COLOR, LFW_MARKERS, OWN_COLORS, OWN_MARKERS, UNKNOWN_COLOR,
-                         UNKNOWN_MARKER, apply_style)
+                         UNKNOWN_MARKER, apply_style, save_fig)
 
 
 def run_tsne(emb: np.ndarray, perplexity: float, max_iter: int = 1000,
@@ -127,7 +127,7 @@ def make_tsne_plots(npz_paths: dict, cfg: dict, out_dir: Path) -> dict:
                    frameon=False, fontsize=8, title="Kişi", title_fontsize=9)
         fig.suptitle(f"t-SNE — {name}  ({len(d['embeddings'])} yüz)", fontsize=11)
         fig.tight_layout(rect=(0, 0, 1 - 1.8 / (4.2 * len(perps) + 1.8), 1))
-        fig.savefig(out_dir / f"tsne_{name}.png", dpi=dpi)
+        save_fig(fig, out_dir / f"tsne_{name}.png", dpi=dpi)
         plt.close(fig)
         print(f"[tsne] {out_dir / f'tsne_{name}.png'}")
 
@@ -149,7 +149,7 @@ def make_tsne_plots(npz_paths: dict, cfg: dict, out_dir: Path) -> dict:
                    loc="center right", frameon=False, fontsize=8, title="Kişi", title_fontsize=9)
         fig.suptitle("t-SNE karşılaştırması (renk + şekil = kişi)", fontsize=12)
         fig.tight_layout(rect=(0, 0, 1 - 1.8 / (4.0 * len(names) + 1.8), 0.98))
-        fig.savefig(out_dir / "tsne_comparison.png", dpi=dpi)
+        save_fig(fig, out_dir / "tsne_comparison.png", dpi=dpi)
         plt.close(fig)
         print(f"[tsne] {out_dir / 'tsne_comparison.png'}")
     return coords

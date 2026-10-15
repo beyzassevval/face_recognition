@@ -4,10 +4,11 @@ sonuçlarından üretilir, yeniden çıkarım gerekmez):
 
   1) threshold_sweep.png      eşik taraması: kayıtlı doğru tanıma ve bilinmeyen ret oranı,
                               ikisinin de %100 olduğu "güvenli aralık" gölgeli
-  2) speed_accuracy.png       hız (tespit + embedding ms) - boşluk ve hız - EER
+  2) speed_accuracy.png       hız (tespit + embedding ms) - normalize boşluk ve hız - EER
   3) hard_examples.png        en zor örnekler: bilinmeyen kişi ve en düşük skorlu kayıtlı
                               problar, galerideki en yakın yüzle yan yana
   4) person_similarity.png    kişi x kişi ortalama kosinüs benzerliği ısı haritası
+  5) quality_rejects.png      kalite kontrolünden geçemeyen kareler ve sebepleri (ayrı kategori)
 
 Birden fazla çalıştırmayı (ör. LFW'li / LFW'siz) tek hız grafiğinde karşılaştırmak için:
   python -m src.extra_plots outputs outputs_lfw --out outputs/plots/speed_accuracy_runs.png
@@ -26,7 +27,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 from .data import SOURCE_LFW, SOURCE_UNKNOWN
-from .plot_style import CONFIG_COLORS, UNKNOWN_COLOR, apply_style
+from .plot_style import CONFIG_COLORS, UNKNOWN_COLOR, apply_style, save_fig
 
 INK = "#0b0b0b"
 INK_2 = "#52514e"
@@ -78,7 +79,7 @@ def plot_threshold_sweep(open_set: dict, out_path: Path, dpi: int = 300) -> None
     fig.suptitle("Eşik taraması: hangi eşik aralığında kayıtlılar tanınıp bilinmeyen reddediliyor?",
                  fontsize=11)
     fig.tight_layout(rect=(0, 0.07, 1, 1))
-    fig.savefig(out_path, dpi=dpi)
+    save_fig(fig, out_path, dpi=dpi)
     plt.close(fig)
 
 
@@ -94,12 +95,13 @@ def _f(v) -> float:
 
 def plot_speed_accuracy(runs: dict[str, list[dict]], out_path: Path, dpi: int = 300) -> None:
     """runs: {çalıştırma adı: results satırları}. İki ayrı panel (tek eksen kuralı):
-    sol = boşluk (büyük iyi), sağ = EER (küçük iyi); x = tespit + embedding süresi."""
+    sol = normalize boşluk (std cinsinden, ölçekten bağımsız; büyük iyi), sağ = EER (küçük iyi);
+    x = tespit + embedding süresi."""
     apply_style()
     markers = ["o", "s", "^", "D"]
     run_names = list(runs)
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.2), squeeze=False)
-    panels = [("open_score_gap", "Boşluk (kayıtlı min − bilinmeyen max)", "↑ daha güvenli", 1.0),
+    panels = [("open_norm_gap", "Normalize boşluk (birleşik std cinsinden)", "↑ daha güvenli", 1.0),
               ("eer", "EER (%)", "↓ daha iyi", 100.0)]
     for ax, (key, ylabel, hint, scale) in zip(axes[0], panels):
         pts: dict[str, list] = {}   # konfigürasyon -> [(x, y), ...] çalıştırma sırasıyla
@@ -139,7 +141,7 @@ def plot_speed_accuracy(runs: dict[str, list[dict]], out_path: Path, dpi: int = 
     fig.legend(handles=handles, loc="center right", frameon=False, fontsize=8)
     fig.suptitle("Hız – doğruluk ödünleşimi: sol panelde sol üst, sağ panelde sol alt en iyisi", fontsize=11)
     fig.tight_layout(rect=(0, 0, 0.8, 1))
-    fig.savefig(out_path, dpi=dpi)
+    save_fig(fig, out_path, dpi=dpi)
     plt.close(fig)
 
 
@@ -161,7 +163,8 @@ def _read_rgb(path: Path) -> np.ndarray | None:
 def plot_hard_examples(open_rows: list[dict], out_dir: Path, out_path: Path,
                        n_known: int = 2, dpi: int = 200) -> None:
     """Satır = konfigürasyon. Her satırda prob | en yakın galeri yüzü çiftleri:
-    önce tüm bilinmeyen problar, sonra en düşük skorlu n_known kayıtlı prob."""
+    önce tüm bilinmeyen problar, sonra kalite kontrolünden geçmiş en düşük skorlu
+    n_known kayıtlı prob (kalite reddi alanlar quality_rejects.png'de)."""
     apply_style()
     configs = list(dict.fromkeys(r["config"] for r in open_rows))
     if not configs:
@@ -170,7 +173,8 @@ def plot_hard_examples(open_rows: list[dict], out_dir: Path, out_path: Path,
     for cfg_name in configs:
         rows = [r for r in open_rows if r["config"] == cfg_name]
         unk = sorted((r for r in rows if r["probe"] == "bilinmeyen"), key=lambda r: -r["score"])
-        kn = sorted((r for r in rows if r["probe"] == "kayıtlı"), key=lambda r: r["score"])[:n_known]
+        kn = sorted((r for r in rows if r["probe"] == "kayıtlı" and r["decision"] != "kalite reddi"),
+                    key=lambda r: r["score"])[:n_known]
         picks[cfg_name] = unk + kn
     n_pairs = max(len(v) for v in picks.values())
     fig, axes = plt.subplots(len(configs), 2 * n_pairs, squeeze=False,
@@ -193,10 +197,15 @@ def plot_hard_examples(open_rows: list[dict], out_dir: Path, out_path: Path,
                     ax.imshow(img)
                 else:
                     ax.text(0.5, 0.5, "kırpma\nyok", ha="center", va="center", fontsize=7, color=MUTED)
-            accepted = r["decision"] != "bilinmeyen"
-            verdict = (("YANLIŞ KABUL" if accepted else "reddedildi") if unknown
-                       else ("tanındı" if accepted and r["best_match"] == r["label"]
-                             else ("yanlış kişi" if accepted else "yanlış ret")))
+            accepted = r["decision"] not in ("bilinmeyen", "kalite reddi")
+            if r["decision"] == "kalite reddi":
+                verdict = "kalite reddi"
+            elif unknown:
+                verdict = "YANLIŞ KABUL" if accepted else "reddedildi"
+            elif accepted:
+                verdict = "tanındı" if r["best_match"] == r["label"] else "yanlış kişi"
+            else:
+                verdict = "yanlış ret"
             tag = "bilinmeyen" if unknown else "en zor kayıtlı"
             a_probe.set_title(f"{tag}\n{r['label']}", fontsize=6.5, color=UNKNOWN_COLOR if unknown else INK_2)
             a_match.set_title(f"en yakın: {r['best_match']}\n{r['score']:.3f} · {verdict}",
@@ -205,7 +214,46 @@ def plot_hard_examples(open_rows: list[dict], out_dir: Path, out_path: Path,
                                labelpad=8, color=CONFIG_COLORS.get(cfg_name, INK))
     fig.suptitle("En zor örnekler: prob (sol) ve galerideki en benzer yüz (sağ)", fontsize=10)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(out_path, dpi=dpi)
+    save_fig(fig, out_path, dpi=dpi)
+    plt.close(fig)
+
+
+def plot_quality_rejects(open_rows: list[dict], out_dir: Path, out_path: Path,
+                         max_items: int = 24, dpi: int = 200) -> None:
+    """Kalite reddi alan kareler (yol başına bir kez): kırpma + kişi + sebep + skor.
+    Skor, kalite kapısı olmasaydı alacağı en yüksek galeri benzerliğidir (bilgi amaçlı)."""
+    apply_style()
+    seen, items = set(), []
+    for r in open_rows:
+        if r["decision"] == "kalite reddi" and r["path"] not in seen:
+            seen.add(r["path"]); items.append(r)
+    if not items:
+        if out_path.exists():
+            out_path.unlink()   # önceki çalıştırmadan kalan grafik yanıltmasın
+        return
+    items = items[:max_items]
+    ncol = min(6, len(items)); nrow = int(np.ceil(len(items) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, squeeze=False, figsize=(2.3 * ncol, 2.9 * nrow))
+    for ax in axes.ravel():
+        ax.set_xticks([]); ax.set_yticks([]); ax.grid(False)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+    for ax, r in zip(axes.ravel(), items):
+        img = _read_rgb(_crop_path(out_dir, r["config"], r["label"], r["path"]))
+        if img is not None:
+            ax.imshow(img)
+        else:
+            ax.text(0.5, 0.5, "kırpma\nyok", ha="center", va="center", fontsize=7, color=MUTED)
+        # Sebep metni: "düşük keskinlik (z: A -4.0, B -3.5, ...)" -> ölçü adı ve z değerleri ayrı satırda
+        why = r["quality"].replace(" (z: ", "\nz: ").replace(")", "").replace("; ", "\n")
+        unknown = r["probe"] == "bilinmeyen"
+        ax.set_title(f"{r['label']}{' (sistemde yok)' if unknown else ''}", fontsize=7.5,
+                     color=UNKNOWN_COLOR if unknown else INK)
+        ax.set_xlabel(why, fontsize=6.2, color=INK_2)
+    fig.suptitle("Kalite reddi: tanıma hatası değil, ayrı kategori (kare galeriye girmez, yeniden çekim istenir)",
+                 fontsize=9.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.95), h_pad=2.0)
+    save_fig(fig, out_path, dpi=dpi)
     plt.close(fig)
 
 
@@ -277,7 +325,7 @@ def plot_person_similarity(datasets: dict, out_path: Path, dpi: int = 300) -> No
     cbar.outline.set_visible(False)
     fig.suptitle("Kişi × kişi ortalama benzerlik (köşegen = kişi içi; ✕ = sistemde olmayan kişi)",
                  fontsize=11)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    save_fig(fig, out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
 
