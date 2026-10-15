@@ -22,6 +22,8 @@ from PIL import Image, ImageOps
 # Kaynak etiketleri: grafiklerde kendi verimiz ile LFW'yi ayırt etmek için
 SOURCE_OWN = "own"
 SOURCE_LFW = "lfw"
+# Galeriye kaydedilmeyen, yalnızca "sistemde olmayan kişi" probu olarak kullanılan kişiler
+SOURCE_UNKNOWN = "unknown"
 
 
 @dataclass
@@ -29,7 +31,7 @@ class Sample:
     """Tek bir görüntü örneği."""
     path: str                 # dosya yolu (LFW için sanal yol: "lfw/<kişi>/<sıra>")
     label: str                # kişi adı
-    source: str               # SOURCE_OWN veya SOURCE_LFW
+    source: str               # SOURCE_OWN, SOURCE_LFW veya SOURCE_UNKNOWN
     # LFW görüntüleri bellekte gelir; kendi görüntülerimiz gerektiğinde diskten okunur
     _image: np.ndarray | None = field(default=None, repr=False)
 
@@ -58,8 +60,15 @@ def _limit_size(img: np.ndarray, max_side: int) -> np.ndarray:
     return cv2.resize(img, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
 
 
-def load_own_dataset(root: str, extensions: list[str], min_images_per_person: int = 1) -> list[Sample]:
-    """Klasör yapısından (klasör adı = etiket) örnekleri listeler."""
+def load_own_dataset(root: str, extensions: list[str], min_images_per_person: int = 1,
+                     unknown_people: list[str] | None = None) -> list[Sample]:
+    """Klasör yapısından (klasör adı = etiket) örnekleri listeler.
+
+    unknown_people'daki kişiler SOURCE_UNKNOWN ile işaretlenir: galeriye girmez,
+    yalnızca açık küme (sistemde olmayan kişi) testinde sahte prob olarak kullanılır.
+    Prob için tek görüntü de yeterli olduğundan min_images_per_person onlara uygulanmaz.
+    """
+    unknown = set(unknown_people or [])
     root_path = Path(root)
     if not root_path.is_dir():
         raise FileNotFoundError(f"Veri klasörü bulunamadı: {root}")
@@ -68,10 +77,15 @@ def load_own_dataset(root: str, extensions: list[str], min_images_per_person: in
     samples: list[Sample] = []
     for person_dir in sorted(p for p in root_path.iterdir() if p.is_dir()):
         files = sorted(f for f in person_dir.iterdir() if f.suffix.lower() in exts)
-        if len(files) < min_images_per_person:
+        is_unknown = person_dir.name in unknown
+        if not is_unknown and len(files) < min_images_per_person:
             print(f"[data] '{person_dir.name}' atlandı: {len(files)} görüntü < {min_images_per_person}")
             continue
-        samples += [Sample(str(f), person_dir.name, SOURCE_OWN) for f in files]
+        src = SOURCE_UNKNOWN if is_unknown else SOURCE_OWN
+        samples += [Sample(str(f), person_dir.name, src) for f in files]
+    missing = unknown - {s.label for s in samples}
+    if missing:
+        print(f"[data] UYARI: unknown_people içinde klasörü/görüntüsü olmayan kişi(ler): {sorted(missing)}")
     return samples
 
 
@@ -111,7 +125,8 @@ def load_lfw_distractors(n_people: int, min_faces_per_person: int, max_images_pe
 def load_samples(cfg: dict) -> list[Sample]:
     """config.yaml'daki 'data' bölümüne göre tüm örnekleri yükler."""
     d = cfg["data"]
-    samples = load_own_dataset(d["root"], d["extensions"], d.get("min_images_per_person", 1))
+    samples = load_own_dataset(d["root"], d["extensions"], d.get("min_images_per_person", 1),
+                               d.get("unknown_people"))
     lfw_cfg = d.get("lfw", {})
     if lfw_cfg.get("enabled"):
         data_home = str(Path(cfg["paths"]["models_dir"]) / "sklearn_data")

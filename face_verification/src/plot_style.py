@@ -18,7 +18,13 @@ CONFIG_COLORS = {
     "A_scrfd_arcface": "#2a78d6",
     "B_mtcnn_facenet": "#eb6834",
     "C_scrfd_facenet": "#1baf7a",
+    "D_yolo_arcface": "#4a3aa7",
+    "E_yolo_facenet": "#c2417a",
 }
+
+# Galeride olmayan ("sistemde kayıtlı değil") kişiler: siyah X, tüm grafiklerde aynı
+UNKNOWN_COLOR = "#0b0b0b"
+UNKNOWN_MARKER = "X"
 
 
 def apply_style():

@@ -38,10 +38,16 @@ class FaceDetector(ABC):
         """Görüntüdeki tüm yüzleri döndürür (boş liste = yüz yok)."""
 
 
-def select_face(dets: list[Detection], mode: str = "largest") -> Detection | None:
-    """Birden fazla yüz varsa tek yüz seçer: en büyük kutu veya en yüksek skor."""
+def select_face(dets: list[Detection], mode: str = "largest",
+                image_shape: tuple | None = None) -> Detection | None:
+    """Birden fazla yüz varsa tek yüz seçer: en büyük kutu, en yüksek skor
+    veya ("center") görüntü merkezine en yakın kutu."""
     if not dets:
         return None
+    if mode == "center":
+        h, w = image_shape[:2]
+        return min(dets, key=lambda d: ((d.bbox[0] + d.bbox[2]) / 2 - w / 2) ** 2
+                                       + ((d.bbox[1] + d.bbox[3]) / 2 - h / 2) ** 2)
     key = (lambda d: d.area) if mode == "largest" else (lambda d: d.score)
     return max(dets, key=key)
 
@@ -119,10 +125,47 @@ class MTCNNDetector(FaceDetector):
                 for i in range(len(boxes))]
 
 
+class YOLOFaceDetector(FaceDetector):
+    """YOLOv8-face (ultralytics, pose görevi): yüz kutusu + 5 nokta.
+
+    Nokta sırası (sol göz, sağ göz, burun, ağız sol, ağız sağ) insightface ile
+    aynıdır; bu yüzden ArcFace hizalamasıyla doğrudan kullanılabilir.
+    """
+    name = "yolo"
+
+    def __init__(self, weights: str, models_dir: str, device: str, imgsz: int = 640,
+                 conf: float = 0.5, half: bool = False, **_):
+        import torch
+        from ultralytics import YOLO
+
+        path = Path(weights)
+        if not path.is_absolute():
+            path = Path(models_dir) / path
+        if not path.is_file():
+            raise FileNotFoundError(f"YOLO ağırlığı bulunamadı: {path}")
+        self.model = YOLO(str(path))
+        use_cuda = device == "cuda" and torch.cuda.is_available()
+        self.opts = dict(imgsz=imgsz, conf=conf, verbose=False,
+                         device=0 if use_cuda else "cpu",
+                         quantize=16 if (half and use_cuda) else 32)
+
+    def detect(self, img_bgr: np.ndarray) -> list[Detection]:
+        # ultralytics numpy girdiyi BGR kabul eder
+        r = self.model(img_bgr, **self.opts)[0]
+        if r.boxes is None or len(r.boxes) == 0:
+            return []
+        boxes = r.boxes.xyxy.cpu().numpy().astype(np.float32)
+        confs = r.boxes.conf.cpu().numpy()
+        kpts = r.keypoints.xy.cpu().numpy().astype(np.float32) if r.keypoints is not None else None
+        return [Detection(boxes[i], float(confs[i]), kpts[i] if kpts is not None else None)
+                for i in range(len(boxes))]
+
+
 # Ad -> sınıf eşlemesi (yeni dedektörler buraya eklenir)
 DETECTORS = {
     "scrfd": SCRFDDetector,
     "mtcnn": MTCNNDetector,
+    "yolo": YOLOFaceDetector,
 }
 
 

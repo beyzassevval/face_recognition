@@ -19,7 +19,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .data import Sample
+from .data import SOURCE_LFW, Sample
 from .detectors import build_detector, select_face
 from .embedders import build_embedder
 
@@ -89,7 +89,9 @@ def run_extraction(cfg: dict, samples: list[Sample], config_names: list[str] | N
         # 2) Her konfigürasyon için: yüz seç -> kırp -> embedding
         for name, c in configs.items():
             faces, det_ms = det_out[c["detector"]]
-            face = select_face(faces, mode)
+            # LFW görüntüleri etiketli kişiye ortalanmıştır; kenardaki daha büyük
+            # bir yüz (ör. Laura Bush karesinde George Bush) yanlış kişiyi seçtirir.
+            face = select_face(faces, "center" if s.source == SOURCE_LFW else mode, img.shape)
             if face is None:
                 failures.append((name, s.path, s.label, "yüz bulunamadı"))
                 continue

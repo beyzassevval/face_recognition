@@ -9,6 +9,9 @@ data:
   extensions: [".jpg", ".jpeg", ".png"]   # .mp4 gibi diğer dosyalar yok sayılır
   min_images_per_person: 2                 # bundan az görüntüsü olan kişi atlanır
   max_side: 1600                           # büyük telefon fotoğrafları bu boyuta küçültülür (hız için)
+  # Galeriye KAYDEDİLMEYEN kişiler: yalnızca "sistemde olmayan kişi" (açık küme) testinde
+  # sahte prob olarak kullanılır; silhouette/ROC/EER hesabına girmez.
+  unknown_people: ["muhammet"]
 
   # Opsiyonel: LFW'den "distractor" (şaşırtıcı) kişi ekleme
   lfw:
@@ -33,6 +36,11 @@ detectors:
   mtcnn:
     min_face_size: 20
     thresholds: [0.6, 0.7, 0.7]
+  yolo:
+    weights: "yolo/yolov8n-face.pt"  # models_dir'e göre; ultralytics pose modeli (kutu + 5 nokta)
+    imgsz: 640
+    conf: 0.5
+    half: false                      # FP16; diğer dedektörlerle adil süre kıyası için kapalı
 
 # Birden fazla yüz bulunursa hangisi seçilsin: "largest" (en büyük kutu) veya "score"
 face_selection: "largest"
@@ -52,6 +60,8 @@ configs:
   A_scrfd_arcface:  {detector: scrfd, embedder: arcface}
   B_mtcnn_facenet:  {detector: mtcnn, embedder: facenet}
   C_scrfd_facenet:  {detector: scrfd, embedder: facenet}
+  D_yolo_arcface:   {detector: yolo,  embedder: arcface}   # A ile tek fark: dedektör
+  E_yolo_facenet:   {detector: yolo,  embedder: facenet}   # B/C ile tek fark: dedektör
 
 tsne:
   perplexities: [5, 15, 30]

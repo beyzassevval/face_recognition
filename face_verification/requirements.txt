@@ -24,3 +24,6 @@ requests
 #    insightface 2.1   -> CPU 'onnxruntime' istiyor; onnxruntime-gpu ile çakışır
 #    facenet-pytorch 2.6.0 -> torch<2.3 ve numpy<2'ye sabitli; yeni sürümlerle çalıştığı doğrulandı
 #    pip install --no-deps insightface==2.1 facenet-pytorch==2.6.0
+
+# 4) YOLO dedektörü
+ultralytics==8.4.177

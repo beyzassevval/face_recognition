@@ -17,8 +17,9 @@ from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from .data import SOURCE_LFW
-from .plot_style import (LFW_COLOR, LFW_MARKERS, OWN_COLORS, OWN_MARKERS, apply_style)
+from .data import SOURCE_LFW, SOURCE_UNKNOWN
+from .plot_style import (LFW_COLOR, LFW_MARKERS, OWN_COLORS, OWN_MARKERS, UNKNOWN_COLOR,
+                         UNKNOWN_MARKER, apply_style)
 
 
 def run_tsne(emb: np.ndarray, perplexity: float, max_iter: int = 1000,
@@ -44,13 +45,17 @@ def valid_perplexities(perplexities: list[float], n_samples: int) -> list[float]
 
 def person_styles(labels: np.ndarray, sources: np.ndarray) -> dict:
     """Kişi -> (renk, marker, içi dolu mu). Sıra alfabetik, böylece tüm grafiklerde sabit."""
-    own = sorted({l for l, s in zip(labels, sources) if s != SOURCE_LFW})
+    own = sorted({l for l, s in zip(labels, sources) if s not in (SOURCE_LFW, SOURCE_UNKNOWN)})
+    unknown = sorted({l for l, s in zip(labels, sources) if s == SOURCE_UNKNOWN})
     lfw = sorted({l for l, s in zip(labels, sources) if s == SOURCE_LFW})
     styles = {}
     for i, p in enumerate(own):
         styles[p] = (OWN_COLORS[i % len(OWN_COLORS)], OWN_MARKERS[i % len(OWN_MARKERS)], True)
     for i, p in enumerate(lfw):
         styles[p] = (LFW_COLOR, LFW_MARKERS[i % len(LFW_MARKERS)], False)
+    # Galeride olmayan kişi(ler): siyah X, en üstte çizilir
+    for p in unknown:
+        styles[p] = (UNKNOWN_COLOR, UNKNOWN_MARKER, True)
     return styles
 
 
@@ -62,9 +67,11 @@ def scatter(ax, xy: np.ndarray, labels: np.ndarray, styles: dict, title: str) ->
         m = labels == p
         if not m.any():
             continue
-        ax.scatter(xy[m, 0], xy[m, 1], s=46 if filled else 34, marker=marker,
+        is_unknown = color == UNKNOWN_COLOR
+        ax.scatter(xy[m, 0], xy[m, 1], s=(80 if is_unknown else 46) if filled else 34, marker=marker,
                    facecolors=color if filled else "none", edgecolors="white" if filled else color,
-                   linewidths=0.8 if filled else 1.1, alpha=0.95, zorder=3 if filled else 2)
+                   linewidths=0.8 if filled else 1.1, alpha=0.95,
+                   zorder=4 if is_unknown else (3 if filled else 2))
     ax.set_title(title, fontsize=10)
     ax.set_xticks([]); ax.set_yticks([])
     ax.grid(False)
@@ -74,7 +81,7 @@ def legend_handles(styles: dict, labels: np.ndarray | None = None) -> list:
     """Lejant girdileri; labels verilirse kişi başına örnek sayısı da yazılır."""
     handles = []
     for p, (color, marker, filled) in sorted(styles.items(), key=lambda kv: (not kv[1][2], kv[0])):
-        tag = "" if filled else " (LFW)"
+        tag = " (sistemde yok)" if color == UNKNOWN_COLOR else ("" if filled else " (LFW)")
         count = f"  n={int((labels == p).sum())}" if labels is not None else ""
         handles.append(Line2D([], [], linestyle="", marker=marker, markersize=7,
                               markerfacecolor=color if filled else "none",

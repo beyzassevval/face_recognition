@@ -1,7 +1,7 @@
 # Yüz Tespiti + Embedding + t-SNE Karşılaştırması
 
-Online sınavlarda yüz doğrulama sistemi için ilk aşama. İki dedektör + embedding ikilisi ve
-bir "adil karşılaştırma" konfigürasyonu çalıştırılıyor. Embedding uzayı t-SNE ile
+Online sınavlarda yüz doğrulama sistemi için ilk aşama. Üç dedektör (SCRFD, MTCNN, YOLOv8-face) ve
+iki embedding modeli (ArcFace, FaceNet) beş konfigürasyonda karşılaştırılıyor. Embedding uzayı t-SNE ile
 görselleştiriliyor, doğrulama başarımı da ROC/EER ile ölçülüyor.
 
 | Konfigürasyon | Dedektör | Hizalama / kırpma | Embedding |
@@ -9,10 +9,13 @@ görselleştiriliyor, doğrulama başarımı da ROC/EER ile ölçülüyor.
 | **A_scrfd_arcface** | SCRFD-10G (insightface `buffalo_l`) | 5 nokta → similarity transform, 112×112 (`norm_crop`) | ArcFace R50 (WebFace600K), 512-B |
 | **B_mtcnn_facenet** | MTCNN (facenet-pytorch) | kutu + margin → 160×160 (hizalama yok) | FaceNet InceptionResnetV1 (VGGFace2), 512-B |
 | **C_scrfd_facenet** | SCRFD-10G (**A ile aynı tespitler**) | B ile **aynı** kırpma fonksiyonu | FaceNet (B ile aynı) |
+| **D_yolo_arcface** | YOLOv8n-face (ultralytics, kutu + 5 nokta) | A ile aynı `norm_crop` | ArcFace (A ile aynı) |
+| **E_yolo_facenet** | YOLOv8n-face (**D ile aynı tespitler**) | B/C ile aynı kırpma | FaceNet (B/C ile aynı) |
 
 **C'nin amacı:** A ile C arasında yalnızca embedding modeli (ve ona bağlı hizalama) değişiyor.
 B ile C arasında ise yalnızca dedektör değişiyor. Böylece A ile B arasındaki farkın ne kadarının
-dedektörden, ne kadarının embedding modelinden geldiği ayrıştırılabiliyor.
+dedektörden, ne kadarının embedding modelinden geldiği ayrıştırılabiliyor. D ve E aynı mantıkla YOLO'yu
+ekliyor: A↔D ve C↔E arasında yalnızca dedektör değişiyor.
 
 ## Kurulum (Windows, NVIDIA GPU)
 
@@ -31,7 +34,12 @@ pip install -r requirements.txt
 
 # 3) Bağımlılıksız kurulanlar (sürüm çakışmaları nedeniyle, aşağıya bakın)
 pip install --no-deps insightface==2.1 facenet-pytorch==2.6.0
+
+# 4) YOLO dedektörü (torch/numpy/opencv sürümlerine dokunmaz)
+pip install ultralytics==8.4.177
 ```
+
+YOLO ağırlığı (`yolov8n-face.pt`) `models/yolo/` altında beklenir (`face_try/` klasöründen kopyalandı).
 
 **Neden bu sıra ve `--no-deps`?**
 - `onnxruntime-gpu` 1.31, **CUDA 13** ile derlenmiş. Bu yüzden torch'un da cu130 sürümü seçildi.
@@ -61,6 +69,9 @@ faces/
 ```
 - `.jpg/.jpeg/.png` dışındaki dosyalar (ör. `.mp4`) yok sayılır.
 - `min_images_per_person` ayarının altında kalan kişiler atlanır.
+- **Sistemde olmayan kişi:** `data.unknown_people` listesindeki kişiler (şu an `muhammet`, yalnızca 2 görüntü)
+  galeriye kaydedilmez. Silhouette/ROC/EER hesabına girmezler, yalnızca **açık küme testinde** sahte prob
+  olarak kullanılırlar: sistem onları eşik altında tutup "bilinmeyen" diyebiliyor mu? t-SNE'de siyah X ile çizilirler.
 - **LFW distractor (opsiyonel):** `data.lfw.enabled: true` ya da `python run_all.py --lfw` ile
   scikit-learn'ün `fetch_lfw_people(min_faces_per_person=20)` setinden `n_people` (varsayılan 8) kişi eklenir.
   Grafiklerde içi boş gri marker ile çizilirler.
@@ -90,6 +101,7 @@ src/embedders.py     FaceEmbedder arayüzü: ArcFace, FaceNet (kırpma/hizalama 
 src/extract.py       tespit → kırpma → embedding → kaydet, süre ölçümü
 src/metrics.py       silhouette, benzerlik histogramları, ROC/AUC/EER
 src/visualize.py     t-SNE grafikleri
+src/extra_plots.py   eşik taraması, hız–doğruluk, en zor örnekler, kişi×kişi ısı haritası
 src/plot_style.py    ortak renkler/stil
 ```
 
@@ -113,6 +125,17 @@ ArcFace ile, yalnızca kutu veren her dedektör FaceNet ile kullanılabilir.
 | `plots/tsne_comparison.png` | tüm konfigürasyonlar yan yana |
 | `plots/similarity_histograms.png` | aynı kişi / farklı kişi kosinüs benzerliği dağılımları |
 | `plots/roc_curves.png` | ROC eğrileri, EER noktaları |
+| `open_set.csv` | açık küme testinde prob başına en yakın kişi, skor ve karar |
+| `plots/open_set_scores.png` | kayıtlı (leave-one-out) ve bilinmeyen probların en yüksek skorları + eşik |
+| `plots/threshold_sweep.png` | eşik taraması: kayıtlı doğru tanıma ve bilinmeyen ret oranı, ikisinin de %100 olduğu güvenli aralık gölgeli |
+| `plots/speed_accuracy.png` | hız (tespit + embedding ms) – boşluk ve hız – EER, iki ayrı panel |
+| `plots/hard_examples.png` | en zor örnekler: bilinmeyen kişi ve en düşük skorlu kayıtlı probların kırpması, galerideki en yakın yüzle yan yana |
+| `plots/person_similarity.png` | kişi × kişi ortalama kosinüs benzerliği ısı haritası (köşegen = kişi içi) |
+
+İki çalıştırmayı (ör. LFW'siz / LFW'li) tek hız grafiğinde karşılaştırmak için:
+```powershell
+python -m src.extra_plots outputs outputs_lfw --out outputs/plots/speed_accuracy_runs.png
+```
 
 ### Metriklerin anlamı
 Tüm metrikler **512-B uzayda** hesaplanır, 2-B t-SNE çıktısında hesaplanmaz.

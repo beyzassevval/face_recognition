@@ -14,3 +14,6 @@ models/
 .venv/
 __pycache__/
 *.pyc
+
+# Prob başına sonuçlar: yerel yollar + kişi adları + skorlar (kişisel veri)
+open_set.csv
